@@ -1,43 +1,20 @@
 from flask import Flask, render_template, request, flash, redirect, url_for, session
 import pandas as pd
 import numpy as np  
-import re  
 import os
 import io
 
 app = Flask(__name__)
-app.secret_key = "cokgizlibirkey-render-icin-v23-denetim-acik" 
+app.secret_key = "cokgizlibirkey-render-icin-v24-raw" 
 
 ROW_LIMIT = 500 
 RULE_FILE_PATH = 'TDHP_Normal_Bakiye_Yonu_SON_7li_dahil.xlsx - TDHP_Bakiye.csv'
 
-# --- YARDIMCI FONKSİYONLAR ---
-# ... (load_rules ve clean_amount_v20 kodları aynı)
-def load_rules():
-    try:
-        rules_df = pd.read_csv(RULE_FILE_PATH, sep=';', encoding='iso-8859-9')
-        rules_df.columns = ['HESAP_KODU', 'HESAP_ADI', 'BAKIYE_YONU', 'BAKIYE_YONU_ING'] + list(rules_df.columns[4:])
-        rules_df['HESAP_KODU'] = pd.to_numeric(rules_df['HESAP_KODU'], errors='coerce')
-        rules_df = rules_df.dropna(subset=['HESAP_KODU'])
-        rules_df['HESAP_KODU'] = rules_df['HESAP_KODU'].astype(int).astype(str).str[:3]
-        rules_df = rules_df.drop_duplicates(subset=['HESAP_KODU']).set_index('HESAP_KODU')
-        rules_df['BAKIYE_YONU'] = rules_df['BAKIYE_YONU'].str.upper().str.strip().replace({'BORÇ': 'B', 'ALACAK': 'A', 'HESAP TÜRÜNE GÖRE': 'H'})
-        return rules_df['BAKIYE_YONU'].to_dict()
-    except Exception as e:
-        print(f"Kural dosyası yüklenirken HATA oluştu: {e}")
-        return None
-
-MUHASEBE_KURALLARI = load_rules()
-
-def clean_amount_v20(series):
-    series = series.astype(str).str.strip()
-    series = series.str.replace(r'[^\d\.\,]', '', regex=True) 
-    series = series.str.replace('.', '', regex=False)        
-    series = series.str.replace(',', '.', regex=False)        
-    return pd.to_numeric(series, errors='coerce').fillna(0)
+# Kural yükleme ve Denetim fonksiyonları, hataya yol açmamak için pasifize edildi.
+# ...
 
 
-# --- YÜKLEME VE FİLTRELEME ---
+# --- YÜKLEME VE HAM VERİ GÖSTERİMİ ---
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'dosya' not in request.files:
@@ -46,119 +23,51 @@ def upload_file():
     file = request.files['dosya']
     
     try:
-        # Dosya okuma (Aynı)
+        # Dosya okuma (CSV ve XLSX desteği)
         filename = file.filename
         if filename.endswith('.csv'):
+            # CSV okuma (başlık atlama 6 satır)
             df = pd.read_csv(file, sep=';', skiprows=6, encoding='iso-8859-9')
         elif filename.endswith('.xlsx'):
+            # Excel okuma (başlık atlama 6 satır)
             df = pd.read_excel(file, engine='openpyxl', header=5)
         else:
             flash("error", "HATA! Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin.")
             return redirect(url_for('ana_sayfa'))
 
-        # TEMİZLEME AŞAMASI
-        df['HESAP KODU'] = df['HESAP KODU'].astype(str)
-        df_clean = df.dropna(subset=['HESAP ADI']).copy() 
-        df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy() 
+        # --- FİLTRE VEYA KAYDIRMA YOK ---
+        # Veriyi olduğu gibi ekrana basıyoruz.
+
+        # Veriyi JSON formatında şifreleyip Session'da sakla (İleride kullanmak için)
+        session['dataframe_json'] = df.to_json()
         
-        # --- RAKAM TEMİZLİĞİ UYGULAMASI ---
-        df_final['BORÇ'] = clean_amount_v20(df_final['BORÇ'])
-        df_final['ALACAK'] = clean_amount_v20(df_final['ALACAK'])
+        total_rows = len(df)
+
+        cikti = f"<h2 style='color: #4CAF50;'>HAM VERİ GÖSTERİMİ BAŞARILI!</h2>"
+        cikti += f"Net İşlem Satırı: {total_rows} <br>"
+        cikti += f"<b>Lütfen aşağıdaki tablonun Yevmiye Defteri ile aynı olduğunu kontrol edin.</b><br><br>"
         
-        # --- KRİTİK HESAP KODU TEMİZLİĞİ ---
-        # HESAP KODU sütunundaki metni ve boşlukları temizler
-        df_final['HESAP KODU'] = df_final['HESAP KODU'].astype(str).str.replace(r'[^0-9\.\,]', '', regex=True)
+        # Ekrana basmadan önce NaN'ları temizle
+        df = df.fillna('')
         
-        # Veriyi JSON formatında şifreleyip Session'da sakla
-        session['dataframe_json'] = df_final.to_json()
-        
-        flash("success", f"Başarılı! Dosyanız temizlendi ve denetim için hazır. Net {len(df_final)} alt hesap bulundu.")
-        return redirect(url_for('ana_sayfa'))
-        
+        return cikti + df.head(ROW_LIMIT).to_html(na_rep='', justify='left')
+
     except Exception as e:
-        flash("error", f"YÜKLEME SIRASINDA KRİTİK HATA! {str(e)}")
+        flash("error", f"KRİTİK VERİ OKUMA HATASI! Hata Kodu: {str(e)}")
         return redirect(url_for('ana_sayfa'))
 
 
-# --- DENETİMİ BAŞLAT (BUTONLA) ---
+# --- DENETİM VE DİĞER KODLAR KALDIRILDI ---
 @app.route('/denetle', methods=['GET'])
 def denetle():
-    if not MUHASEBE_KURALLARI:
-        flash("error", "Hata: Kural dosyası yüklenmediği için analiz yapılamıyor.")
-        return redirect(url_for('ana_sayfa'))
-
-    if 'dataframe_json' not in session:
-        flash("error", "Hata: Denetlenecek veri bulunamadı! Lütfen önce dosyayı yükleyin.")
-        return redirect(url_for('ana_sayfa'))
-
-    try:
-        df_final = pd.read_json(session['dataframe_json'])
-
-        # Borç ve Alacak sütunlarının varlığını kontrol et
-        if 'BORÇ' not in df_final.columns or 'ALACAK' not in df_final.columns:
-            flash("error", "Kritik Hata: BORÇ veya ALACAK sütunları bulunamıyor.")
-            return redirect(url_for('ana_sayfa'))
-        
-        # --- BORÇ/ALACAK DENETİM MOTORU ---
-        
-        df_final['HATA_DURUMU'] = ''
-        
-        for index, row in df_final.iterrows():
-            try:
-                # KRİTİK: Temizlenmiş Hesap Kodunu kullan
-                ana_hesap = str(row['HESAP KODU']).split('.')[0].strip()
-                ana_hesap_ilk_uc = ana_hesap[:3]
-            except Exception as e_analiz:
-                 df_final.loc[index, 'HATA_DURUMU'] = f"Analiz Hatası: Hesap Kodu Bulunamadı. {e_analiz}"
-                 continue # Analiz hatası olan satırı atla
-            
-            if ana_hesap_ilk_uc in MUHASEBE_KURALLARI:
-                kural = MUHASEBE_KURALLARI[ana_hesap_ilk_uc]
-                borc_var = row['BORÇ'] > 0
-                alacak_var = row['ALACAK'] > 0
-                
-                hata_mesaji = []
-                
-                if kural == 'B' and alacak_var:
-                    hata_mesaji.append(f"TERS KAYIT (B): Kural Borç çalışması der, Alacak'ta değer var.")
-                
-                if kural == 'A' and borc_var:
-                    hata_mesaji.append(f"TERS KAYIT (A): Kural Alacak çalışması der, Borç'ta değer var.")
-                
-                if borc_var and alacak_var:
-                     hata_mesaji.append(f"ÇİFT KAYIT: Borç ve Alacak aynı anda dolu! Kural: {kural}")
-
-                if hata_mesaji:
-                    df_final.loc[index, 'HATA_DURUMU'] = " / ".join(hata_mesaji)
-        
-        # --- SONUÇ RAPORU HAZIRLAMA VE GÖSTERME ---
-        
-        total_errors = len(df_final[df_final['HATA_DURUMU'] != ''])
-        total_rows = len(df_final)
-
-        cikti = f"<h2 style='color: #4CAF50;'>BORÇ/ALACAK DENETİMİ TAMAMLANDI!</h2>"
-        cikti += f"Net İşlem Satırı: {total_rows} <br>"
-        cikti += f"<b style='color: red;'>TESPİT EDİLEN TERS KAYIT/HATA SAYISI: {total_errors}</b><br><br>"
-        
-        df_final['BORÇ'] = df_final['BORÇ'].round(2)
-        df_final['ALACAK'] = df_final['ALACAK'].round(2)
-        
-        df_final = df_final.fillna('')
-        
-        cols = ['HATA_DURUMU'] + [col for col in df_final.columns if col not in ['HATA_DURUMU', 'HESAP KODU', 'HESAP_KODU_STR']]
-        df_final = df_final[['HESAP KODU'] + cols] 
-        
-        return cikti + df_final.head(ROW_LIMIT).to_html(na_rep='', justify='left')
-
-    except Exception as e:
-        flash("error", f"DENETİM MOTORU KRİTİK HATA VERDİ: {str(e)}")
-        return redirect(url_for('ana_sayfa'))
+    flash("error", "Denetim butonu geçici olarak kapalıdır. Ham veriyi kontrol ediyoruz.")
+    return redirect(url_for('ana_sayfa'))
 
 
-# --- HTML ve Diğer Fonksiyonlar ---
 @app.route('/', methods=['GET'])
 def ana_sayfa():
-    data_loaded = 'dataframe_json' in session
+    # Artık denetim butonu yok
+    data_loaded = False 
     return render_template('index.html', data_loaded=data_loaded)
 
 @app.teardown_request

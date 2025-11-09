@@ -6,13 +6,13 @@ import os
 import io
 
 app = Flask(__name__)
-app.secret_key = "cokgizlibirkey-render-icin-v14-debug" 
+app.secret_key = "cokgizlibirkey-render-icin-v15-nihai" 
 
 ROW_LIMIT = 500 
 RULE_FILE_PATH = 'TDHP_Normal_Bakiye_Yonu_SON_7li_dahil.xlsx - TDHP_Bakiye.csv'
 
 # --- YARDIMCI FONKSİYONLAR ---
-# (Kural yükleme kodları burada yer alıyor, sadeleştirme için burada gösterilmemiştir)
+# ... (load_rules fonksiyonu aynı kalıyor)
 def load_rules():
     try:
         rules_df = pd.read_csv(RULE_FILE_PATH, sep=';', encoding='iso-8859-9')
@@ -30,7 +30,14 @@ def load_rules():
 MUHASEBE_KURALLARI = load_rules()
 
 
-# --- YÜKLEME VE BORÇ/ALACAK KAYDIRMA KISMI (PASİFİZE EDİLDİ) ---
+# --- ANA SAYFA ---
+@app.route('/')
+def ana_sayfa():
+    data_loaded = 'dataframe_json' in session
+    return render_template('index.html', data_loaded=data_loaded)
+
+
+# --- YÜKLEME VE VERİYİ SAKLAMA (SADECE TEMİZLİK) ---
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'dosya' not in request.files:
@@ -47,33 +54,23 @@ def upload_file():
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
 
-        # TEMİZLEME AŞAMASI (v10)
+        # VERİ TEMİZLEME AŞAMASI (v10 - Sadece Alt Hesapları Ayırma)
         df['HESAP KODU'] = df['HESAP KODU'].astype(str)
         df_clean = df.dropna(subset=['HESAP ADI']).copy() 
         df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy() 
         
-        # BORÇ/ALACAK KAYDIRMA KODU İHMAL EDİLDİ! SADECE TEMİZ VERİ SAKLANIYOR.
-        
-        # Borç ve Alacak sütunlarını yine de sayıya çevirelim (hata var mı diye görmek için)
-        df_final['BORÇ'] = pd.to_numeric(df_final['BORÇ'], errors='coerce').fillna(0)
-        df_final['ALACAK'] = pd.to_numeric(df_final['ALACAK'], errors='coerce').fillna(0)
-
-        # NaN temizliği
-        df_final = df_final.fillna('')
-        
-        # Veriyi JSON formatında şifreleyip Session'da sakla
+        # Veriyi JSON formatında şifreleyip Session'da sakla (Kaydırma işlemi DENETİM'e taşındı)
         session['dataframe_json'] = df_final.to_json()
         
-        flash(f"BAŞARILI (DEBUG MOD)! Kaydırma yapılmadı. Net {len(df_final)} alt hesap bulundu. Lütfen 'Denetle' butonuna basın.")
+        flash(f"Başarılı! Dosyanız temizlendi ve denetim için hazır. Net {len(df_final)} alt hesap bulundu.")
         return redirect(url_for('ana_sayfa'))
         
     except Exception as e:
-        # Hata Kayıt: Eğer buraya düşerse, sorun dosya okuma veya temel temizliktedir.
-        flash(f"KRİTİK HATA (DEBUG)! Dosya okuma/temel temizlikte hata: {str(e)}")
+        flash(f"YÜKLEME SIRASINDA KRİTİK HATA! (Temel temizlik hatası): {str(e)}")
         return redirect(url_for('ana_sayfa'))
 
 
-# --- DENETİMİ BAŞLAT (BUTONLA) ---
+# --- DENETİMİ BAŞLAT (BUTONLA) - KAYDIRMA BURADA YAPILACAK ---
 @app.route('/denetle', methods=['GET'])
 def denetle():
     if not MUHASEBE_KURALLARI:
@@ -87,43 +84,96 @@ def denetle():
     try:
         df_final = pd.read_json(session['dataframe_json'])
 
-        # Borç ve Alacak sütunlarının varlığını kontrol et
-        if 'BORÇ' not in df_final.columns or 'ALACAK' not in df_final.columns:
-            flash("Kritik Hata: BORÇ veya ALACAK sütunları bulunamıyor.")
-            return redirect(url_for('ana_sayfa'))
+        # --- BORÇ/ALACAK KAYDIRMA İŞLEMİ (v12'nin kayıp parçası) ---
+        df_final['BORÇ_HAM'] = pd.to_numeric(df_final['BORÇ'], errors='coerce')
+        df_final['ALACAK_HAM'] = pd.to_numeric(df_final['ALACAK'], errors='coerce')
+        df_error = df_final[df_final['BORÇ_HAM'].isna() & df_final['ALACAK_HAM'].isna()].copy()
         
-        # --- BORÇ/ALACAK DENETİM MOTORU (Bu kısım analiz yapacak, sadece göstermek için) ---
-        # (Bu kısım v13 ile aynı, analiz kodunu içeriyor)
-        # ...
+        # Metin içinden sayı çekme fonksiyonu
+        def extract_amount(row):
+            text = str(row['DETAY']) + " " + str(row['AÇIKLAMA'])
+            match = re.search(r'(\d[\d\.\,]+)', text) 
+            if match:
+                return float(match.group(1).replace('.', '').replace(',', '.')) 
+            return 0.0
 
-        # Hata analizi yapıldıktan sonra...
-        total_errors = len(df_final[df_final['HATA_DURUMU'] != '']) # Hata sütunu v13'te oluşturulmalıydı
+        if not df_error.empty:
+            df_error.loc[:, 'BORÇ_YENİ'] = df_error.apply(extract_amount, axis=1)
+            df_error.loc[:, 'ALACAK_YENİ'] = 0.0 # Alacak her zaman aynı satırda boş
+            
+            # Ana tabloya geri kaydır (update)
+            df_final.update(df_error[['BORÇ_YENİ']].rename(columns={'BORÇ_YENİ': 'BORÇ'}))
+            df_final.update(df_error[['ALACAK_YENİ']].rename(columns={'ALACAK_YENİ': 'ALACAK'}))
+            
+            # Eski Borç/Alacak sütunlarını düzgün bir şekilde birleştir
+            df_final['BORÇ'] = df_final['BORÇ'].combine_first(df_final['BORÇ_HAM']).fillna(0)
+            df_final['ALACAK'] = df_final['ALACAK'].combine_first(df_final['ALACAK_HAM']).fillna(0)
+
+        df_final = df_final.drop(columns=['BORÇ_HAM', 'ALACAK_HAM'], errors='ignore')
+        
+        # --- BORÇ/ALACAK DENETİM MOTORU ---
+        
+        df_final['HATA_DURUMU'] = ''
+        
+        for index, row in df_final.iterrows():
+            try:
+                ana_hesap = str(row['HESAP KODU']).split('.')[0].strip()
+                ana_hesap_ilk_uc = ana_hesap[:3]
+            except:
+                continue 
+            
+            # Kural Kontrolü (Hata Tespiti)
+            if ana_hesap_ilk_uc in MUHASEBE_KURALLARI:
+                kural = MUHASEBE_KURALLARI[ana_hesap_ilk_uc]
+                borc_var = row['BORÇ'] > 0
+                alacak_var = row['ALACAK'] > 0
+                
+                hata_mesaji = []
+                
+                if kural == 'B' and alacak_var:
+                    hata_mesaji.append(f"TERS KAYIT (B): Kural Borç çalışması der, Alacak'ta değer var.")
+                
+                if kural == 'A' and borc_var:
+                    hata_mesaji.append(f"TERS KAYIT (A): Kural Alacak çalışması der, Borç'ta değer var.")
+                
+                if borc_var and alacak_var:
+                     hata_mesaji.append(f"ÇİFT KAYIT: Borç ve Alacak aynı anda dolu! Kural: {kural}")
+
+                if hata_mesaji:
+                    df_final.loc[index, 'HATA_DURUMU'] = " / ".join(hata_mesaji)
+        
+        # --- SONUÇ RAPORU HAZIRLAMA VE GÖSTERME ---
+        
+        total_errors = len(df_final[df_final['HATA_DURUMU'] != ''])
         total_rows = len(df_final)
 
-        cikti = f"<h2 style='color: #4CAF50;'>DENETİM SONUCU (KAYDIRMA YOK):</h2>"
+        cikti = f"<h2 style='color: #4CAF50;'>BORÇ/ALACAK DENETİMİ TAMAMLANDI!</h2>"
         cikti += f"Net İşlem Satırı: {total_rows} <br>"
-        cikti += f"<b style='color: red;'>TESPİT EDİLEN TERS KAYIT/HATA SAYISI: {total_errors}</b><br><br>"
+        cikti += f"<b style='color: red;'>TESPİT EDİLEN TERS KAYIT/HATA SAYISI: {total_errors}</b><br>"
+        cikti += f"<small>(Not: 'HATA_DURUMU' boşsa kayıt kurala uygundur.)</small><br><br>"
         
-        # HTML'e çevir ve döndür
-        df_display = df_final.head(ROW_LIMIT)
-        return cikti + df_display.to_html(na_rep='', justify='left')
+        df_final['BORÇ'] = df_final['BORÇ'].round(2)
+        df_final['ALACAK'] = df_final['ALACAK'].round(2)
+        
+        # NaN'ları boş string'e çevir
+        df_final = df_final.fillna('')
+        
+        # Hata sütununu en öne al
+        cols = ['HATA_DURUMU'] + [col for col in df_final.columns if col not in ['HATA_DURUMU', 'HESAP KODU', 'HESAP_KODU_STR']]
+        df_final = df_final[['HESAP KODU'] + cols] 
+        
+        return cikti + df_final.head(ROW_LIMIT).to_html(na_rep='', justify='left')
 
     except Exception as e:
         flash(f"DENETİM MOTORU HATA VERDİ: {str(e)}")
         return redirect(url_for('ana_sayfa'))
 
 
-# --- HTML ve Diğer Fonksiyonlar (Önceki kodla aynı) ---
-@app.route('/denetle', methods=['GET'])
-# ... [Yukarıdaki kodun devamı olarak eklenmelidir. Sadeleştirme için tam kodu tekrar vermedim]
-# ...
-
-
+# --- HTML ve Diğer Fonksiyonlar ---
 @app.teardown_request
 def cleanup(exception=None):
     pass
     
-
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

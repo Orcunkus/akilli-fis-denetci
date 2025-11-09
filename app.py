@@ -51,19 +51,13 @@ def upload_file():
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- YENİ AKILLI FİLTRE (v3) ---
+        # --- YENİ AKILLI FİLTRE (v4) ---
         
-        # 1. 'BORÇ' ve 'ALACAK' sütunlarını sayıya çevir (çöp temizliği için hazırlık)
-        df['BORÇ'] = pd.to_numeric(df['BORÇ'], errors='coerce')
-        df['ALACAK'] = pd.to_numeric(df['ALACAK'], errors='coerce')
-
-        # 2. 'AÇIKLAMA' ve 'DETAY' sütunlarına bakarak çöp veriyi (ana/ara toplamları) temizle
-        #    Eğer bir satırın hem AÇIKLAMA'sı hem de DETAY'ı boşsa (NaN) O SATIRI AT.
-        #    Sadece gerçek işlem satırları kalacak.
-        df_clean = df.dropna(subset=['AÇIKLAMA', 'DETAY'], how='all').copy()
+        # Kural: Sadece 'AÇIKLAMA' sütunu DOLU olan satırları tut.
+        # Bu, 'AÇIKLAMA'sı boş (NaN) olan tüm ana hesapları, ara toplamları,
+        # 'TOPLAM', 'MAHSUP' ve 'FİŞ AÇIKLAMA' satırlarını otomatik olarak siler.
         
-        # 3. (Ekstra Temizlik) Kalan veride, hem BORÇ hem ALACAK boşsa (bazen olur) onları da at.
-        df_final = df_clean.dropna(subset=['BORÇ', 'ALACAK'], how='all').copy()
+        df_final = df.dropna(subset=['AÇIKLAMA']).copy()
         
         # ----------------------------------------
         
@@ -72,7 +66,7 @@ def upload_file():
         total_rows_final = len(df_final) # Artık TEMİZLENMİŞ satır sayısı
         
         cikti = f"Dosya ({file_type}) başarıyla okundu! (Toplam {total_rows_raw} ham satır) <br>"
-        cikti += f"SADECE GERÇEK İŞLEM SATIRLARI FİLTRELENDİ ('Açıklama' ve 'Detay'ı dolu olanlar). <br>"
+        cikti += f"SADECE 'AÇIKLAMA'SI DOLU OLAN GERÇEK İŞLEM SATIRLARI FİLTRELENDİ. <br>"
         cikti += f"**Net {total_rows_final} satır** işlem bulundu. <br>"
         cikti += f"Sunucu için **ilk {ROW_LIMIT} satır** gösteriliyor...<br><br>"
         

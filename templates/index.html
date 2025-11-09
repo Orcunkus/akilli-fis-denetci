@@ -2,13 +2,55 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Akıllı Fiş Denetçisi (Render)</title>
+    <title>Akıllı Fiş Denetçisi</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .success { color: green; border: 1px solid green; padding: 10px; margin-bottom: 15px; background-color: #E6FFE6; } /* Arka planı yeşile yakın yaptık */
+        .error { color: red; border: 1px solid red; padding: 10px; margin-bottom: 15px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .highlight { background-color: #FFCCCC !important; }
+        
+        /* KRİTİK DÜZELTME: Butonu yeşil yapma */
+        .button-link {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #4CAF50; /* Yeşil arka plan */
+            color: white; /* Beyaz yazı rengi */
+            text-align: center;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            margin-top: 10px; /* Biraz boşluk bırak */
+        }
+    </style>
 </head>
 <body>
-    <h2>Yevmiye Defteri Yükle (Excel)</h2>
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="dosya" accept=".xlsx">
-        <input type="submit" value="Yükle ve Analiz Et">
+    <h1>Akıllı Fiş Denetçisi</h1>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="{% if category == 'error' %}error{% else %}success{% endif %}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <h2>1. Yevmiye Defteri Yükle (Veriyi Temizle)</h2>
+    <form action="{{ url_for('upload_file') }}" method="post" enctype="multipart/form-data">
+        <input type="file" name="dosya" accept=".xlsx,.csv" required>
+        <input type="submit" value="Yükle ve Temizle">
     </form>
+
+    {% if data_loaded %}
+        <hr>
+        <h2>2. Denetimi Başlat</h2>
+        <p>Veriniz hazır. Borç/Alacak kurallarına göre denetimi başlatmak için butona basın.</p>
+        <a href="{{ url_for('denetle') }}" class="button-link">Denetlemeye Başla</a>
+    {% endif %}
+
 </body>
 </html>

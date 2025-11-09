@@ -6,13 +6,12 @@ import os
 import io
 
 app = Flask(__name__)
-app.secret_key = "cokgizlibirkey-render-icin-v15-nihai" 
+app.secret_key = "cokgizlibirkey-render-icin-v16-debug" 
 
 ROW_LIMIT = 500 
 RULE_FILE_PATH = 'TDHP_Normal_Bakiye_Yonu_SON_7li_dahil.xlsx - TDHP_Bakiye.csv'
 
-# --- YARDIMCI FONKSİYONLAR ---
-# ... (load_rules fonksiyonu aynı kalıyor)
+# --- YARDIMCI FONKSİYONLAR (Aynı) ---
 def load_rules():
     try:
         rules_df = pd.read_csv(RULE_FILE_PATH, sep=';', encoding='iso-8859-9')
@@ -30,49 +29,56 @@ def load_rules():
 MUHASEBE_KURALLARI = load_rules()
 
 
-# --- ANA SAYFA ---
-@app.route('/')
-def ana_sayfa():
-    data_loaded = 'dataframe_json' in session
-    return render_template('index.html', data_loaded=data_loaded)
-
-
-# --- YÜKLEME VE VERİYİ SAKLAMA (SADECE TEMİZLİK) ---
+# --- YÜKLEME VE VERİYİ SAKLAMA ---
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'dosya' not in request.files:
-        return "Dosya seçilmedi!"
+        flash("HATA! Dosya Seçilmedi.")
+        return redirect(url_for('ana_sayfa'))
+    
     file = request.files['dosya']
+    
+    # DEBUG KONTROL: Eğer dosya adı yoksa (seçilmemişse)
+    if file.filename == '':
+        flash("HATA! Dosya seçildi ama dosya adı boş.")
+        return redirect(url_for('ana_sayfa'))
     
     try:
         # Dosya okuma (CSV ve XLSX desteği)
+        # ... (Dosya okuma mantığı aynı)
+        
         filename = file.filename
         if filename.endswith('.csv'):
             df = pd.read_csv(file, sep=';', skiprows=6, encoding='iso-8859-9')
         elif filename.endswith('.xlsx'):
             df = pd.read_excel(file, engine='openpyxl', header=5)
         else:
-            return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
+            flash("HATA! Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin.")
+            return redirect(url_for('ana_sayfa'))
 
-        # VERİ TEMİZLEME AŞAMASI (v10 - Sadece Alt Hesapları Ayırma)
+
+        # TEMİZLEME AŞAMASI (v10)
         df['HESAP KODU'] = df['HESAP KODU'].astype(str)
         df_clean = df.dropna(subset=['HESAP ADI']).copy() 
         df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy() 
         
-        # Veriyi JSON formatında şifreleyip Session'da sakla (Kaydırma işlemi DENETİM'e taşındı)
+        # Veriyi JSON formatında şifreleyip Session'da sakla
         session['dataframe_json'] = df_final.to_json()
         
         flash(f"Başarılı! Dosyanız temizlendi ve denetim için hazır. Net {len(df_final)} alt hesap bulundu.")
         return redirect(url_for('ana_sayfa'))
         
     except Exception as e:
-        flash(f"YÜKLEME SIRASINDA KRİTİK HATA! (Temel temizlik hatası): {str(e)}")
+        # HATA KAYDI: Eğer buraya düşerse, dosya çok büyüktür veya format bozuktur.
+        flash(f"YÜKLEME SIRASINDA KRİTİK HATA! (Kod hatası veya büyük dosya): {str(e)}")
         return redirect(url_for('ana_sayfa'))
 
 
-# --- DENETİMİ BAŞLAT (BUTONLA) - KAYDIRMA BURADA YAPILACAK ---
+# --- DENETİMİ BAŞLAT (BUTONLA) ---
 @app.route('/denetle', methods=['GET'])
 def denetle():
+    # ... (Denetim kodu v15 ile aynı, BORÇ/ALACAK kaydırma dahil)
+    
     if not MUHASEBE_KURALLARI:
         flash("Hata: Kural dosyası yüklenmediği için analiz yapılamıyor.")
         return redirect(url_for('ana_sayfa'))
@@ -89,7 +95,6 @@ def denetle():
         df_final['ALACAK_HAM'] = pd.to_numeric(df_final['ALACAK'], errors='coerce')
         df_error = df_final[df_final['BORÇ_HAM'].isna() & df_final['ALACAK_HAM'].isna()].copy()
         
-        # Metin içinden sayı çekme fonksiyonu
         def extract_amount(row):
             text = str(row['DETAY']) + " " + str(row['AÇIKLAMA'])
             match = re.search(r'(\d[\d\.\,]+)', text) 
@@ -99,19 +104,17 @@ def denetle():
 
         if not df_error.empty:
             df_error.loc[:, 'BORÇ_YENİ'] = df_error.apply(extract_amount, axis=1)
-            df_error.loc[:, 'ALACAK_YENİ'] = 0.0 # Alacak her zaman aynı satırda boş
+            df_error.loc[:, 'ALACAK_YENİ'] = 0.0
             
-            # Ana tabloya geri kaydır (update)
             df_final.update(df_error[['BORÇ_YENİ']].rename(columns={'BORÇ_YENİ': 'BORÇ'}))
             df_final.update(df_error[['ALACAK_YENİ']].rename(columns={'ALACAK_YENİ': 'ALACAK'}))
             
-            # Eski Borç/Alacak sütunlarını düzgün bir şekilde birleştir
             df_final['BORÇ'] = df_final['BORÇ'].combine_first(df_final['BORÇ_HAM']).fillna(0)
             df_final['ALACAK'] = df_final['ALACAK'].combine_first(df_final['ALACAK_HAM']).fillna(0)
 
         df_final = df_final.drop(columns=['BORÇ_HAM', 'ALACAK_HAM'], errors='ignore')
         
-        # --- BORÇ/ALACAK DENETİM MOTORU ---
+        # --- BORÇ/ALACAK DENETİM MOTORU (v15) ---
         
         df_final['HATA_DURUMU'] = ''
         
@@ -122,7 +125,6 @@ def denetle():
             except:
                 continue 
             
-            # Kural Kontrolü (Hata Tespiti)
             if ana_hesap_ilk_uc in MUHASEBE_KURALLARI:
                 kural = MUHASEBE_KURALLARI[ana_hesap_ilk_uc]
                 borc_var = row['BORÇ'] > 0
@@ -155,21 +157,25 @@ def denetle():
         df_final['BORÇ'] = df_final['BORÇ'].round(2)
         df_final['ALACAK'] = df_final['ALACAK'].round(2)
         
-        # NaN'ları boş string'e çevir
         df_final = df_final.fillna('')
         
-        # Hata sütununu en öne al
         cols = ['HATA_DURUMU'] + [col for col in df_final.columns if col not in ['HATA_DURUMU', 'HESAP KODU', 'HESAP_KODU_STR']]
         df_final = df_final[['HESAP KODU'] + cols] 
         
         return cikti + df_final.head(ROW_LIMIT).to_html(na_rep='', justify='left')
 
     except Exception as e:
-        flash(f"DENETİM MOTORU HATA VERDİ: {str(e)}")
+        flash(f"DENETİM MOTORU KRİTİK HATA VERDİ: {str(e)}")
         return redirect(url_for('ana_sayfa'))
 
+# --- HTML ve Diğer Fonksiyonlar (Aynı) ---
+@app.route('/', methods=['GET'])
+def ana_sayfa():
+    # ...
+    data_loaded = 'dataframe_json' in session
+    return render_template('index.html', data_loaded=data_loaded)
 
-# --- HTML ve Diğer Fonksiyonlar ---
+# ... (Diğer fonksiyonlar)
 @app.teardown_request
 def cleanup(exception=None):
     pass

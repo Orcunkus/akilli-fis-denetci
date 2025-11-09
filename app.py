@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, flash
 import pandas as pd
+import numpy as np  # YENİ KÜTÜPHANE: Boşlukları temizlemek için
 import os
 import io 
 
@@ -51,14 +52,10 @@ def upload_file():
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- YENİ AKILLI FİLTRE (v6) ---
+        # --- YENİ AKILLI FİLTRE (v7) ---
         
         # AŞAMA 1: ÇÖP VERİYİ (MAHSUP, TOPLAM, FİŞ AÇIKLAMA vb.) TEMİZLE
-        # 'HESAP KODU'nu metne çevir (NaN'ları da 'nan' yapar)
         df['HESAP_KODU_STR'] = df['HESAP KODU'].astype(str)
-        
-        # İçinde 'MAHSUP', 'TOPLAM', 'FİŞ AÇIKLAMA', 'HESAP KODU' (tekrar eden başlık)
-        # olmayan satırları tut (case=False -> büyük/küçük harf duyarsız)
         df_clean = df[
             ~df['HESAP_KODU_STR'].str.contains('MAHSUP', na=False, case=False) &
             ~df['HESAP_KODU_STR'].str.contains('TOPLAM', na=False, case=False) &
@@ -67,8 +64,12 @@ def upload_file():
         ].copy()
 
         # AŞAMA 2: ANA/ARA HESAPLARI (Açıklaması boş olanlar) TEMİZLE
-        # Geriye kalan temiz veriden (df_clean), 'AÇIKLAMA' ve 'DETAY' sütunları
-        # aynı anda boş (NaN) olanları AT.
+        
+        # 2a. Boş metinleri ("" veya " ") gerçek NaN'a (boş) çevir
+        df_clean['AÇIKLAMA'] = df_clean['AÇIKLAMA'].replace(r'^\s*$', np.nan, regex=True)
+        df_clean['DETAY'] = df_clean['DETAY'].replace(r'^\s*$', np.nan, regex=True)
+
+        # 2b. Artık 'AÇIKLAMA' ve 'DETAY' sütunları aynı anda NaN (gerçek boş) olanları at.
         df_final = df_clean.dropna(subset=['AÇIKLAMA', 'DETAY'], how='all').copy()
 
         # ----------------------------------------

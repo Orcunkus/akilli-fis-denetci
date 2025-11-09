@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Akıllı Fiş Denetçisi (Kaydırma Test)</title>
+    <title>Akıllı Fiş Denetçisi (Ham Veri)</title>
     <style>
         body { font-family: Arial, sans-serif; padding: 20px; }
         .success { color: green; border: 1px solid green; padding: 10px; margin-bottom: 15px; background-color: #E6FFE6; }
@@ -13,7 +13,7 @@
     </style>
 </head>
 <body>
-    <h1>Akıllı Fiş Denetçisi (Kaydırma Test)</h1>
+    <h1>Akıllı Fiş Denetçisi (Ham Veri Modu)</h1>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
@@ -25,11 +25,10 @@
         {% endif %}
     {% endwith %}
 
-    <h2>1. Yevmiye Defteri Yükle ve Kaydırmayı Test Et</h2>
+    <h2>1. Yevmiye Defteri Yükle ve Görüntüle</h2>
     <form action="{{ url_for('upload_file') }}" method="post" enctype="multipart/form-data">
         <input type="file" name="dosya" accept=".xlsx,.csv" required>
-        <input type="submit" value="Yükle ve Kaydır (TEST)">
+        <input type="submit" value="Yükle ve Görüntüle (Ham)">
     </form>
-
-    </body>
+</body>
 </html>

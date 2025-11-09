@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Akıllı Fiş Denetçisi</title>
+    <title>Akıllı Fiş Denetçisi (Kaydırma Test)</title>
     <style>
         body { font-family: Arial, sans-serif; padding: 20px; }
         .success { color: green; border: 1px solid green; padding: 10px; margin-bottom: 15px; background-color: #E6FFE6; }
@@ -10,21 +10,10 @@
         table { border-collapse: collapse; width: 100%; margin-top: 20px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background-color: #f2f2f2; }
-        .button-link {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: #4CAF50;
-            color: white;
-            text-align: center;
-            text-decoration: none;
-            border-radius: 5px;
-            font-weight: bold;
-            margin-top: 10px;
-        }
     </style>
 </head>
 <body>
-    <h1>Akıllı Fiş Denetçisi</h1>
+    <h1>Akıllı Fiş Denetçisi (Kaydırma Test)</h1>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
@@ -36,18 +25,11 @@
         {% endif %}
     {% endwith %}
 
-    <h2>1. Yevmiye Defteri Yükle (Veriyi Temizle)</h2>
+    <h2>1. Yevmiye Defteri Yükle ve Kaydırmayı Test Et</h2>
     <form action="{{ url_for('upload_file') }}" method="post" enctype="multipart/form-data">
         <input type="file" name="dosya" accept=".xlsx,.csv" required>
-        <input type="submit" value="Yükle ve Temizle">
+        <input type="submit" value="Yükle ve Kaydır (TEST)">
     </form>
 
-    {% if data_loaded %}
-        <hr>
-        <h2>2. Denetimi Başlat</h2>
-        <p>Veriniz hazır. Borç/Alacak kurallarına göre denetimi başlatmak için butona basın.</p>
-        <a href="{{ url_for('denetle') }}" class="button-link">Denetlemeye Başla</a>
-    {% endif %}
-
-</body>
+    </body>
 </html>

@@ -6,13 +6,13 @@ import os
 import io
 
 app = Flask(__name__)
-app.secret_key = "cokgizlibirkey-render-icin-v22-denetim-acik" 
+app.secret_key = "cokgizlibirkey-render-icin-v23-denetim-acik" 
 
 ROW_LIMIT = 500 
 RULE_FILE_PATH = 'TDHP_Normal_Bakiye_Yonu_SON_7li_dahil.xlsx - TDHP_Bakiye.csv'
 
 # --- YARDIMCI FONKSİYONLAR ---
-# ... (load_rules kodu aynı)
+# ... (load_rules ve clean_amount_v20 kodları aynı)
 def load_rules():
     try:
         rules_df = pd.read_csv(RULE_FILE_PATH, sep=';', encoding='iso-8859-9')
@@ -29,8 +29,6 @@ def load_rules():
 
 MUHASEBE_KURALLARI = load_rules()
 
-# --- RAKAM TEMİZLEME FONKSİYONU (V20) ---
-# Bu sefer rakamları temizlerken sadece Borç/Alacak sütununu kullanıyoruz
 def clean_amount_v20(series):
     series = series.astype(str).str.strip()
     series = series.str.replace(r'[^\d\.\,]', '', regex=True) 
@@ -67,10 +65,14 @@ def upload_file():
         df_final['BORÇ'] = clean_amount_v20(df_final['BORÇ'])
         df_final['ALACAK'] = clean_amount_v20(df_final['ALACAK'])
         
+        # --- KRİTİK HESAP KODU TEMİZLİĞİ ---
+        # HESAP KODU sütunundaki metni ve boşlukları temizler
+        df_final['HESAP KODU'] = df_final['HESAP KODU'].astype(str).str.replace(r'[^0-9\.\,]', '', regex=True)
+        
         # Veriyi JSON formatında şifreleyip Session'da sakla
         session['dataframe_json'] = df_final.to_json()
         
-        flash("success", f"Başarılı! Veriniz temizlendi ve denetim için hazır. Net {len(df_final)} alt hesap bulundu.")
+        flash("success", f"Başarılı! Dosyanız temizlendi ve denetim için hazır. Net {len(df_final)} alt hesap bulundu.")
         return redirect(url_for('ana_sayfa'))
         
     except Exception as e:
@@ -78,7 +80,7 @@ def upload_file():
         return redirect(url_for('ana_sayfa'))
 
 
-# --- DENETİMİ BAŞLAT (BUTONLA) - ANALİZ BURADA YAPILACAK ---
+# --- DENETİMİ BAŞLAT (BUTONLA) ---
 @app.route('/denetle', methods=['GET'])
 def denetle():
     if not MUHASEBE_KURALLARI:
@@ -103,10 +105,12 @@ def denetle():
         
         for index, row in df_final.iterrows():
             try:
+                # KRİTİK: Temizlenmiş Hesap Kodunu kullan
                 ana_hesap = str(row['HESAP KODU']).split('.')[0].strip()
                 ana_hesap_ilk_uc = ana_hesap[:3]
-            except:
-                continue 
+            except Exception as e_analiz:
+                 df_final.loc[index, 'HATA_DURUMU'] = f"Analiz Hatası: Hesap Kodu Bulunamadı. {e_analiz}"
+                 continue # Analiz hatası olan satırı atla
             
             if ana_hesap_ilk_uc in MUHASEBE_KURALLARI:
                 kural = MUHASEBE_KURALLARI[ana_hesap_ilk_uc]

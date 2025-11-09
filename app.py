@@ -6,9 +6,8 @@ import io
 app = Flask(__name__)
 app.secret_key = "cokgizlibirkey-render-icin" 
 
-# --- YENİ LİMİTİMİZ ---
-# Sunucuyu çökertmemek için en fazla kaç satır göstereceğimizi belirleyelim.
-ROW_LIMIT = 200
+# Toplam 244 satırsa, 500'lük bir limit bizim için çok güvenli.
+ROW_LIMIT = 500
 
 @app.route('/')
 def ana_sayfa():
@@ -32,12 +31,12 @@ def upload_file():
         df = None
         file_type = ""
 
+        # Dosya okuma mantığımız (CSV ve Excel için)
         if filename.endswith('.csv'):
             file_type = "CSV"
-            # CSV okuyucuyu (skiprows=6 ile) geri getiriyoruz
             try:
                 file.seek(0)
-                # Not: CSV'de satır sayımı 1'den başlar, 6 satır atla = 7. satırdan başla
+                # CSV'de 6 satır atla = 7. satırdan (header) başla
                 df = pd.read_csv(file, sep=';', skiprows=6, encoding='latin1')
             except Exception as e_csv1:
                 file.seek(0)
@@ -48,23 +47,41 @@ def upload_file():
 
         elif filename.endswith('.xlsx'):
             file_type = "Excel"
-            # Excel kodumuz (header=5 ile) zaten çalışıyordu
             file.seek(0) 
+            # Excel'de 5. index = 6. satır (header)
             df = pd.read_excel(file, engine='openpyxl', header=5)
         
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- RAPORLAMA (LİMİTLİ) ---
+        # --- İŞTE YENİ AKILLI FİLTRE BURADA ---
         
-        total_rows = len(df)
+        # 1. 'HESAP KODU' sütununu sayıya çevirmeye zorla.
+        #    "HESAP KODU", "00115---", "TOPLAM" gibi metinler 'NaN' (boş) olacak.
+        df['HESAP KODU'] = pd.to_numeric(df['HESAP KODU'], errors='coerce')
+
+        # 2. Sadece 'HESAP KODU' bir sayı olan (NaN olmayan) satırları tut.
+        #    Bu, tüm "TOPLAM", "MAHSUP", "FİŞ AÇIKLAMA" ve boş satırları temizler.
+        df = df.dropna(subset=['HESAP KODU'])
+
+        # 3. 'HESAP KODU'nu daha temiz görünmesi için tamsayıya çevir (zorunlu değil)
+        try:
+            df['HESAP KODU'] = df['HESAP KODU'].astype(int)
+        except Exception:
+            pass # Hata olursa es geç, sorun değil
+            
+        # ----------------------------------------
         
-        cikti = f"Dosya ({file_type}) başarıyla okundu! **Toplam {total_rows} satır** bulundu. <br>"
-        cikti += f"Sunucu çökmesin diye **ilk {ROW_LIMIT} satır** gösteriliyor...<br><br>"
+        # RAPORLAMA (LİMİTLİ)
+        total_rows = len(df) # Artık TEMİZLENMİŞ satır sayısı
+        
+        cikti = f"Dosya ({file_type}) başarıyla okundu VE TEMİZLENDİ! <br>"
+        cikti += f"Çöp veriler (TOPLAM, Fiş Başlıkları) ayıklandı. **Net {total_rows} satır** veri bulundu. <br>"
+        cikti += f"Sunucu için **ilk {ROW_LIMIT} satır** gösteriliyor...<br><br>"
         
         cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df.columns) + "<br><br>"
         
-        # 'NaN' gitsin (na_rep='') VE ilk 200 satırı göster (.head(ROW_LIMIT))
+        # 'NaN' gitsin (na_rep='') VE ilk 500 satırı göster
         cikti += df.head(ROW_LIMIT).to_html(na_rep='') 
 
         return cikti

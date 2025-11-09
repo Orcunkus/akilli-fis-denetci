@@ -6,7 +6,7 @@ import io
 app = Flask(__name__)
 app.secret_key = "cokgizlibirkey-render-icin" 
 
-# Toplam 244 satırsa, 500'lük bir limit bizim için çok güvenli.
+# Sunucuyu çökertmeyecek güvenli bir limit
 ROW_LIMIT = 500
 
 @app.route('/')
@@ -54,37 +54,44 @@ def upload_file():
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- İŞTE YENİ AKILLI FİLTRE BURADA ---
+        # --- YENİ AKILLI FİLTRE (v2) ---
         
-        # 1. 'HESAP KODU' sütununu sayıya çevirmeye zorla.
-        #    "HESAP KODU", "00115---", "TOPLAM" gibi metinler 'NaN' (boş) olacak.
-        df['HESAP KODU'] = pd.to_numeric(df['HESAP KODU'], errors='coerce')
+        # 1. 'BORÇ' ve 'ALACAK' sütunlarını sayıya çevir. Sayı olmayanlar 'NaN' olacak.
+        df['BORÇ'] = pd.to_numeric(df['BORÇ'], errors='coerce')
+        df['ALACAK'] = pd.to_numeric(df['ALACAK'], errors='coerce')
 
-        # 2. Sadece 'HESAP KODU' bir sayı olan (NaN olmayan) satırları tut.
-        #    Bu, tüm "TOPLAM", "MAHSUP", "FİŞ AÇIKLAMA" ve boş satırları temizler.
-        df = df.dropna(subset=['HESAP KODU'])
-
-        # 3. 'HESAP KODU'nu daha temiz görünmesi için tamsayıya çevir (zorunlu değil)
-        try:
-            df['HESAP KODU'] = df['HESAP KODU'].astype(int)
-        except Exception:
-            pass # Hata olursa es geç, sorun değil
-            
+        # 2. Hem BORÇ hem de ALACAK sütunu 'NaN' (boş) olan satırları at.
+        #    Bu, tüm 'TOPLAM', 'FİŞ AÇIKLAMA', 'MAHSUP' ve boş satırları temizler.
+        df_clean = df.dropna(subset=['BORÇ', 'ALACAK'], how='all').copy()
+        
+        # --- İSTEK: SADECE ALT HESAPLAR ---
+        # 3. 'HESAP KODU'nu metin (string) olarak ele al
+        df_clean['HESAP KODU'] = df_clean['HESAP KODU'].astype(str)
+        
+        # 4. İçinde '.' (nokta) olan HESAP KODU'larını (yani alt hesapları) tut
+        df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy()
+        
         # ----------------------------------------
         
         # RAPORLAMA (LİMİTLİ)
-        total_rows = len(df) # Artık TEMİZLENMİŞ satır sayısı
+        total_rows_raw = len(df)
+        total_rows_final = len(df_final) # Artık TEMİZLENMİŞ satır sayısı
         
-        cikti = f"Dosya ({file_type}) başarıyla okundu VE TEMİZLENDİ! <br>"
-        cikti += f"Çöp veriler (TOPLAM, Fiş Başlıkları) ayıklandı. **Net {total_rows} satır** veri bulundu. <br>"
+        cikti = f"Dosya ({file_type}) başarıyla okundu! (Toplam {total_rows_raw} ham satır) <br>"
+        cikti += f"Çöp veriler (TOPLAM, Fiş Başlıkları) ayıklandı. <br>"
+        cikti += f"Sadece alt hesaplar (içinde '.' olanlar) filtrelendi. **Net {total_rows_final} satır** veri bulundu. <br>"
         cikti += f"Sunucu için **ilk {ROW_LIMIT} satır** gösteriliyor...<br><br>"
         
-        cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df.columns) + "<br><br>"
+        cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df_final.columns) + "<br><br>"
         
         # 'NaN' gitsin (na_rep='') VE ilk 500 satırı göster
-        cikti += df.head(ROW_LIMIT).to_html(na_rep='') 
+        cikti += df_final.head(ROW_LIMIT).to_html(na_rep='') 
 
         return cikti
         
     except Exception as e:
         return f"GENEL HATA: {str(e)}"
+
+if __name__ == "__main__":
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)

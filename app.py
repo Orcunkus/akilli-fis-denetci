@@ -51,14 +51,26 @@ def upload_file():
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- YENİ AKILLI FİLTRE (v4) ---
+        # --- YENİ AKILLI FİLTRE (v6) ---
         
-        # Kural: Sadece 'AÇIKLAMA' sütunu DOLU olan satırları tut.
-        # Bu, 'AÇIKLAMA'sı boş (NaN) olan tüm ana hesapları, ara toplamları,
-        # 'TOPLAM', 'MAHSUP' ve 'FİŞ AÇIKLAMA' satırlarını otomatik olarak siler.
+        # AŞAMA 1: ÇÖP VERİYİ (MAHSUP, TOPLAM, FİŞ AÇIKLAMA vb.) TEMİZLE
+        # 'HESAP KODU'nu metne çevir (NaN'ları da 'nan' yapar)
+        df['HESAP_KODU_STR'] = df['HESAP KODU'].astype(str)
         
-        df_final = df.dropna(subset=['AÇIKLAMA']).copy()
-        
+        # İçinde 'MAHSUP', 'TOPLAM', 'FİŞ AÇIKLAMA', 'HESAP KODU' (tekrar eden başlık)
+        # olmayan satırları tut (case=False -> büyük/küçük harf duyarsız)
+        df_clean = df[
+            ~df['HESAP_KODU_STR'].str.contains('MAHSUP', na=False, case=False) &
+            ~df['HESAP_KODU_STR'].str.contains('TOPLAM', na=False, case=False) &
+            ~df['HESAP_KODU_STR'].str.contains('FİŞ AÇIKLAMA', na=False, case=False) &
+            ~df['HESAP_KODU_STR'].str.contains('HESAP KODU', na=False, case=False)
+        ].copy()
+
+        # AŞAMA 2: ANA/ARA HESAPLARI (Açıklaması boş olanlar) TEMİZLE
+        # Geriye kalan temiz veriden (df_clean), 'AÇIKLAMA' ve 'DETAY' sütunları
+        # aynı anda boş (NaN) olanları AT.
+        df_final = df_clean.dropna(subset=['AÇIKLAMA', 'DETAY'], how='all').copy()
+
         # ----------------------------------------
         
         # RAPORLAMA (LİMİTLİ)
@@ -66,10 +78,15 @@ def upload_file():
         total_rows_final = len(df_final) # Artık TEMİZLENMİŞ satır sayısı
         
         cikti = f"Dosya ({file_type}) başarıyla okundu! (Toplam {total_rows_raw} ham satır) <br>"
-        cikti += f"SADECE 'AÇIKLAMA'SI DOLU OLAN GERÇEK İŞLEM SATIRLARI FİLTRELENDİ. <br>"
-        cikti += f"**Net {total_rows_final} satır** işlem bulundu. <br>"
+        cikti += f"Tüm çöp satırlar (TOPLAM, MAHSUP, FİŞ AÇIKLAMA) ayıklandı. <br>"
+        cikti += f"Açıklaması boş olan Ana/Ara Hesaplar ayıklandı. <br>"
+        cikti += f"**Net {total_rows_final} satır** gerçek işlem bulundu. <br>"
         cikti += f"Sunucu için **ilk {ROW_LIMIT} satır** gösteriliyor...<br><br>"
         
+        # O geçici sütuna artık ihtiyacımız yok, tabloda görünmesin
+        if 'HESAP_KODU_STR' in df_final.columns:
+            df_final = df_final.drop(columns=['HESAP_KODU_STR'])
+            
         cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df_final.columns) + "<br><br>"
         
         # 'NaN' gitsin (na_rep='') VE ilk 500 satırı göster

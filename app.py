@@ -6,8 +6,7 @@ import io
 app = Flask(__name__)
 app.secret_key = "cokgizlibirkey-render-icin" 
 
-# Sunucuyu çökertmeyecek güvenli bir limit (dosyan 244 satırsa 500 yeterli)
-ROW_LIMIT = 500
+ROW_LIMIT = 500 # Güvenli limitimiz
 
 @app.route('/')
 def ana_sayfa():
@@ -36,7 +35,6 @@ def upload_file():
             file_type = "CSV"
             try:
                 file.seek(0)
-                # CSV'de 6 satır atla = 7. satırdan (header) başla
                 df = pd.read_csv(file, sep=';', skiprows=6, encoding='latin1')
             except Exception as e_csv1:
                 file.seek(0)
@@ -48,28 +46,24 @@ def upload_file():
         elif filename.endswith('.xlsx'):
             file_type = "Excel"
             file.seek(0) 
-            # Excel'de 5. index = 6. satır (header)
             df = pd.read_excel(file, engine='openpyxl', header=5)
         
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- AKILLI FİLTRE (v2) BURADA ---
+        # --- YENİ AKILLI FİLTRE (v3) ---
         
-        # 1. 'BORÇ' ve 'ALACAK' sütunlarını sayıya çevir. Sayı olmayanlar 'NaN' olacak.
+        # 1. 'BORÇ' ve 'ALACAK' sütunlarını sayıya çevir (çöp temizliği için hazırlık)
         df['BORÇ'] = pd.to_numeric(df['BORÇ'], errors='coerce')
         df['ALACAK'] = pd.to_numeric(df['ALACAK'], errors='coerce')
 
-        # 2. Hem BORÇ hem de ALACAK sütunu 'NaN' (boş) olan satırları at.
-        #    Bu, tüm 'TOPLAM', 'FİŞ AÇIKLAMA', 'MAHSUP' ve boş satırları temizler.
-        df_clean = df.dropna(subset=['BORÇ', 'ALACAK'], how='all').copy()
+        # 2. 'AÇIKLAMA' ve 'DETAY' sütunlarına bakarak çöp veriyi (ana/ara toplamları) temizle
+        #    Eğer bir satırın hem AÇIKLAMA'sı hem de DETAY'ı boşsa (NaN) O SATIRI AT.
+        #    Sadece gerçek işlem satırları kalacak.
+        df_clean = df.dropna(subset=['AÇIKLAMA', 'DETAY'], how='all').copy()
         
-        # --- SENİN İSTEĞİN: SADECE ALT HESAPLAR ---
-        # 3. 'HESAP KODU'nu metin (string) olarak ele al
-        df_clean['HESAP KODU'] = df_clean['HESAP KODU'].astype(str)
-        
-        # 4. İçinde '.' (nokta) olan HESAP KODU'larını (yani alt hesapları) tut
-        df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy()
+        # 3. (Ekstra Temizlik) Kalan veride, hem BORÇ hem ALACAK boşsa (bazen olur) onları da at.
+        df_final = df_clean.dropna(subset=['BORÇ', 'ALACAK'], how='all').copy()
         
         # ----------------------------------------
         
@@ -78,8 +72,8 @@ def upload_file():
         total_rows_final = len(df_final) # Artık TEMİZLENMİŞ satır sayısı
         
         cikti = f"Dosya ({file_type}) başarıyla okundu! (Toplam {total_rows_raw} ham satır) <br>"
-        cikti += f"Çöp veriler (TOPLAM, Fiş Başlıkları) ayıklandı. <br>"
-        cikti += f"Sadece alt hesaplar (içinde '.' olanlar) filtrelendi. **Net {total_rows_final} satır** veri bulundu. <br>"
+        cikti += f"SADECE GERÇEK İŞLEM SATIRLARI FİLTRELENDİ ('Açıklama' ve 'Detay'ı dolu olanlar). <br>"
+        cikti += f"**Net {total_rows_final} satır** işlem bulundu. <br>"
         cikti += f"Sunucu için **ilk {ROW_LIMIT} satır** gösteriliyor...<br><br>"
         
         cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df_final.columns) + "<br><br>"

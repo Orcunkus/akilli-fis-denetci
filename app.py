@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, flash
 import pandas as pd
-import numpy as np  # Boşlukları (' ' veya '') temizlemek için
+import numpy as np  
 import os
 import io 
 
@@ -52,18 +52,16 @@ def upload_file():
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- YENİ AKILLI FİLTRE (v8) ---
+        # --- YENİ AKILLI FİLTRE (v9) ---
         
-        # KURAL: Sadece 'DETAY' sütunu DOLU olan satırları tut.
+        # 1. HESAP KODU'nu metne çevir ve HESAP ADI BOŞ OLANLARI (MAHSUP, TOPLAM, vb.) AT.
+        df['HESAP KODU'] = df['HESAP KODU'].astype(str)
+        df_clean = df.dropna(subset=['HESAP ADI']).copy()
         
-        # 1. 'DETAY' sütunundaki boş metinleri ("" veya " ") gerçek NaN'a (boş) çevir
-        df['DETAY'] = df['DETAY'].replace(r'^\s*$', np.nan, regex=True)
+        # 2. SADECE ALT HESAPLARI TUT (İçinde nokta olanlar)
+        # Bu, 153, 191, 320 gibi ana hesapları atar.
+        df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy()
 
-        # 2. 'DETAY' sütunu NaN (boş) olan tüm satırları AT.
-        #    Bu, 'TOPLAM', 'MAHSUP', 'FİŞ AÇIKLAMA' ve tüm ana/ara hesapları
-        #    tek seferde temizleyecektir.
-        df_final = df.dropna(subset=['DETAY']).copy()
-        
         # ----------------------------------------
         
         # RAPORLAMA (LİMİTLİ)
@@ -71,8 +69,8 @@ def upload_file():
         total_rows_final = len(df_final) # Artık TEMİZLENMİŞ satır sayısı
         
         cikti = f"Dosya ({file_type}) başarıyla okundu! (Toplam {total_rows_raw} ham satır) <br>"
-        cikti += f"SADECE 'DETAY'I DOLU OLAN GERÇEK İŞLEM SATIRLARI FİLTRELENDİ. <br>"
-        cikti += f"**Net {total_rows_final} satır** işlem bulundu. <br>"
+        cikti += f"Tüm ana hesaplar, toplamlar ve çöp veriler ayıklandı. <br>"
+        cikti += f"**Net {total_rows_final} satır** gerçek alt hesap işlemi bulundu. <br>"
         cikti += f"Sunucu için **ilk {ROW_LIMIT} satır** gösteriliyor...<br><br>"
         
         cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df_final.columns) + "<br><br>"
@@ -84,7 +82,3 @@ def upload_file():
         
     except Exception as e:
         return f"GENEL HATA: {str(e)}"
-
-if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)

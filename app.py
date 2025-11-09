@@ -1,25 +1,21 @@
 from flask import Flask, render_template, request, flash, redirect, url_for, session
 import pandas as pd
 import numpy as np  
+import re  
 import os
 import io
 
 app = Flask(__name__)
-app.secret_key = "cokgizlibirkey-render-icin-v24-sadece-temizlik" 
+app.secret_key = "cokgizlibirkey-render-icin-v25-style" 
 
 ROW_LIMIT = 500 
+RULE_FILE_PATH = 'TDHP_Normal_Bakiye_Yonu_SON_7li_dahil.xlsx - TDHP_Bakiye.csv'
 
-# --- RAKAM TEMİZLEME FONKSİYONU (V20) ---
-# Bu, Borç/Alacak sütunlarındaki format hatalarını (nokta/virgül) temizler.
-def clean_amount_v20(series):
-    series = series.astype(str).str.strip()
-    series = series.str.replace(r'[^\d\.\,]', '', regex=True) 
-    series = series.str.replace('.', '', regex=False)        
-    series = series.str.replace(',', '.', regex=False)        
-    return pd.to_numeric(series, errors='coerce').fillna(0)
+# ... (Yardımcı fonksiyonlar aynı kalıyor)
+# ...
 
 
-# --- YÜKLEME VE FİLTRELEME ---
+# --- YÜKLEME VE HAM VERİ GÖSTERİMİ ---
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'dosya' not in request.files:
@@ -38,50 +34,52 @@ def upload_file():
             flash("error", "HATA! Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin.")
             return redirect(url_for('ana_sayfa'))
 
-        # TEMİZLEME AŞAMASI (Sadece Alt Hesapları Tutar, Rakamları Temizler)
-        df['HESAP KODU'] = df['HESAP KODU'].astype(str)
-        df_clean = df.dropna(subset=['HESAP ADI']).copy() 
-        df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy() 
-        
-        # Rakam Temizliği (Borç/Alacak)
-        df_final['BORÇ'] = clean_amount_v20(df_final['BORÇ'])
-        df_final['ALACAK'] = clean_amount_v20(df_final['ALACAK'])
+        # --- FİLTRE VEYA KAYDIRMA YOK ---
 
-        # Veriyi JSON formatında şifreleyip Session'da sakla (Bu, HTML'de sonucu gösterir)
-        session['dataframe_json_gosterim'] = df_final.to_json()
+        # Veriyi olduğu gibi ekrana basıyoruz.
+        total_rows = len(df)
+
+        cikti = f"<h2 style='color: #4CAF50;'>HAM VERİ GÖSTERİMİ BAŞARILI!</h2>"
+        cikti += f"Net İşlem Satırı: {total_rows} <br>"
+        cikti += f"<b>Lütfen aşağıdaki tablonun Yevmiye Defteri ile aynı olduğunu kontrol edin.</b><br><br>"
         
-        flash("success", f"Başarılı! Veriniz temizlendi ve denetim için hazır. Net {len(df_final)} alt hesap bulundu.")
-        return redirect(url_for('ana_sayfa'))
+        # Ekrana basmadan önce NaN'ları temizle
+        df = df.fillna('')
         
+        # DataFrame'i HTML'e çevir
+        html_output = df.head(ROW_LIMIT).to_html(na_rep='', justify='left')
+
+        # --- YENİ KOD: STİL UYGULAMASI (MAHSUP FİŞLERİNİ KIRMIZI VE KALIN YAPMA) ---
+        # REGEX: Herhangi bir hücrede "xxxxx-----MAHSUP" düzeni arar
+        # Bu Mahsup fişi başlangıcını bulup etiketlerle sarar.
+        html_output = re.sub(
+            r'(\d{5}-----.*?MAHSUP-----.*?TL)',
+            r"<b style='color: red;'>\1</b>", 
+            html_output, 
+            flags=re.IGNORECASE | re.DOTALL
+        )
+
+        cikti += html_output
+        return cikti
+
     except Exception as e:
-        flash("error", f"YÜKLEME SIRASINDA KRİTİK HATA! {str(e)}")
+        flash("error", f"KRİTİK VERİ OKUMA HATASI! Hata Kodu: {str(e)}")
         return redirect(url_for('ana_sayfa'))
 
 
-# --- DENETİMİ BAŞLAT (PASİF) ---
+# --- DENETİM VE DİĞER KODLAR (AYNI) ---
+# ... (Diğer fonksiyonlar ve HTML kısmı v24 ile aynı kalır)
 @app.route('/denetle', methods=['GET'])
 def denetle():
-    flash("error", "Denetim butonu şu an pasif durumdadır. Önce veri temizliğini kontrol ediniz.")
+    flash("error", "Denetim butonu şu an pasiftir. Ham veriyi kontrol ediyoruz.")
     return redirect(url_for('ana_sayfa'))
 
 
-# --- ANA SAYFA (SONUCU GÖSTEREN) ---
 @app.route('/', methods=['GET'])
 def ana_sayfa():
-    df_html = ""
-    # Eğer yüklenen veri varsa, onu oku ve HTML'e çevir
-    if 'dataframe_json_gosterim' in session:
-        try:
-            df_gosterim = pd.read_json(session.pop('dataframe_json_gosterim'))
-            df_gosterim['BORÇ'] = df_gosterim['BORÇ'].round(2)
-            df_gosterim['ALACAK'] = df_gosterim['ALACAK'].round(2)
-            df_gosterim = df_gosterim.fillna('')
-            df_html = df_gosterim.head(ROW_LIMIT).to_html(na_rep='', justify='left')
-        except Exception as e:
-            flash("error", f"Veri Görüntüleme Hatası: {str(e)}")
-            
-    data_loaded = False # Denetim butonu göstermeyeceğiz
-    return render_template('index.html', data_loaded=data_loaded, result_table=df_html)
+    # Artık denetim butonu yok
+    data_loaded = False 
+    return render_template('index.html', data_loaded=data_loaded)
 
 @app.teardown_request
 def cleanup(exception=None):

@@ -21,17 +21,16 @@ def upload_file():
 
     if file:
         try:
-            # --- GÜNCELLEME BURADA ---
-            # Pandas'a "header=4" ekleyerek 5. satırdan (index 4) okumaya başlamasını söylüyoruz.
-            # İlk 4 satırı (0-3) otomatik olarak atlayacak.
-            df = pd.read_excel(file, engine='openpyxl', header=4)
+            # --- YENİ GÜNCELLEME BURADA ---
+            # Header'ın 6. satırda (index 5) olduğunu anladık.
+            df = pd.read_excel(file, engine='openpyxl', header=5)
             
             # --- RAPORLAMA ---
             # Artık bize HESAP KODU, AÇIKLAMA gibi "gerçek" sütunları göstermesi lazım.
-            cikti = "Dosya başarıyla okundu VE temizlendi! (Render.com) <br><br>"
-            cikti += "Verinin (Temizlenmiş) İlk 5 Satırı: <br>"
+            cikti = "İŞTE ŞİMDİ OLDU! (Render.com) <br><br>"
             
             # Hata ayıklama: Sütun adlarını yazdıralım
+            # Artık burada "HESAP KODU", "HESAP ADI" vb. görmeliyiz.
             cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df.columns) + "<br><br>"
             
             # DataFrame'i HTML'e çevir

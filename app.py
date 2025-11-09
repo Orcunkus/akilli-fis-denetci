@@ -6,6 +6,10 @@ import io
 app = Flask(__name__)
 app.secret_key = "cokgizlibirkey-render-icin" 
 
+# --- YENİ LİMİTİMİZ ---
+# Sunucuyu çökertmemek için en fazla kaç satır göstereceğimizi belirleyelim.
+ROW_LIMIT = 200
+
 @app.route('/')
 def ana_sayfa():
     return render_template('index.html')
@@ -30,44 +34,40 @@ def upload_file():
 
         if filename.endswith('.csv'):
             file_type = "CSV"
-            
-            # --- HATA AYIKLAMA 1. DENEME: CSV (Noktalı Virgül) ---
-            # 'skiprows=6' KALDIRILDI. Muhtemelen CSV'de o başlıklar yok.
-            # 'latin1' (veya ISO-8859-9) Türkçe için yaygındır.
+            # CSV okuyucuyu (skiprows=6 ile) geri getiriyoruz
             try:
-                file.seek(0) # Dosyayı başa sar (her deneme için önemli)
-                df = pd.read_csv(file, sep=';', encoding='latin1')
+                file.seek(0)
+                # Not: CSV'de satır sayımı 1'den başlar, 6 satır atla = 7. satırdan başla
+                df = pd.read_csv(file, sep=';', skiprows=6, encoding='latin1')
             except Exception as e_csv1:
-                
-                # --- HATA AYIKLAMA 2. DENEME: CSV (Virgül) ---
+                file.seek(0)
                 try:
-                    file.seek(0) # Dosyayı başa sar
-                    df = pd.read_csv(file, sep=',', encoding='utf-8')
+                    df = pd.read_csv(file, sep=',', skiprows=6, encoding='utf-8')
                 except Exception as e_csv2:
-                    # İkisi de başarısız olursa hataları göster
-                    return f"CSV dosyası okunamadı. <br><br>Hata 1 (Noktalı Virgül denemesi) : {str(e_csv1)} <br><br> Hata 2 (Virgül denemesi) : {str(e_csv2)}"
+                    return f"CSV dosyası okunamadı (skiprows=6 denendi). Hata: {str(e_csv2)}"
 
         elif filename.endswith('.xlsx'):
             file_type = "Excel"
-            # Excel kodumuz zaten çalışıyordu, buna dokunmuyoruz.
+            # Excel kodumuz (header=5 ile) zaten çalışıyordu
             file.seek(0) 
             df = pd.read_excel(file, engine='openpyxl', header=5)
         
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- RAPORLAMA (GÜNCELLENDİ) ---
+        # --- RAPORLAMA (LİMİTLİ) ---
         
         total_rows = len(df)
         
-        cikti = f"Dosya ({file_type}) başarıyla okundu! **Toplam {total_rows} satır** bulundu. (DEBUG MODU) <br><br>"
+        cikti = f"Dosya ({file_type}) başarıyla okundu! **Toplam {total_rows} satır** bulundu. <br>"
+        cikti += f"Sunucu çökmesin diye **ilk {ROW_LIMIT} satır** gösteriliyor...<br><br>"
+        
         cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df.columns) + "<br><br>"
         
-        # 'NaN' gitsin VE sunucu çökmesin diye ilk 100 satırı göster
-        cikti += df.head(100).to_html(na_rep='') 
+        # 'NaN' gitsin (na_rep='') VE ilk 200 satırı göster (.head(ROW_LIMIT))
+        cikti += df.head(ROW_LIMIT).to_html(na_rep='') 
 
         return cikti
         
     except Exception as e:
-        # Bu, en dıştaki hata yakalayıcı.
-        return f"GENEL HATA (en dış blok): {str(e)}"
+        return f"GENEL HATA: {str(e)}"

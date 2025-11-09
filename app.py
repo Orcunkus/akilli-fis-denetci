@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, flash
 import pandas as pd
 import os
-import io # CSV okumak için gerekebilir
+import io 
 
 app = Flask(__name__)
 app.secret_key = "cokgizlibirkey-render-icin" 
@@ -19,57 +19,55 @@ def upload_file():
 
     if file.filename == '':
         return "Dosya adı boş!"
+    
+    if not file:
+        return "Dosya objesi boş!"
 
-    if file:
-        try:
-            filename = file.filename
-            df = None # DataFrame'i önce boş tanımlayalım
-            file_type = ""
+    try:
+        filename = file.filename
+        df = None
+        file_type = ""
 
-            # --- YENİ AKILLI KOD ---
-            # 1. Dosya uzantısını kontrol et
-            if filename.endswith('.csv'):
-                file_type = "CSV"
-                # CSV okuyucuyu çalıştır.
-                # Türkçe Yevmiye Defterleri genelde Excel'den gelir ve ; (noktalı virgül) ile ayrılır.
-                # Başlık atlama (skiprows) Excel ile aynı (header=5 yerine skiprows=6)
-                # Not: CSV'de satır sayımı 0'dan değil 1'den başlar, bu yüzden 6 satır atla diyoruz.
+        if filename.endswith('.csv'):
+            file_type = "CSV"
+            
+            # --- HATA AYIKLAMA 1. DENEME: CSV (Noktalı Virgül) ---
+            # 'skiprows=6' KALDIRILDI. Muhtemelen CSV'de o başlıklar yok.
+            # 'latin1' (veya ISO-8859-9) Türkçe için yaygındır.
+            try:
+                file.seek(0) # Dosyayı başa sar (her deneme için önemli)
+                df = pd.read_csv(file, sep=';', encoding='latin1')
+            except Exception as e_csv1:
+                
+                # --- HATA AYIKLAMA 2. DENEME: CSV (Virgül) ---
                 try:
-                    df = pd.read_csv(file, sep=';', skiprows=6, encoding='latin1')
-                except Exception as e_csv:
-                    # Hata olursa, belki de virgülledir veya UTF-8'dir?
                     file.seek(0) # Dosyayı başa sar
-                    try:
-                        df = pd.read_csv(file, sep=',', skiprows=6, encoding='utf-8')
-                    except Exception as e_csv_2:
-                         return f"CSV dosyası okunamadı. (Noktalı virgül ve virgül denendi). Hata: {str(e_csv_2)}"
+                    df = pd.read_csv(file, sep=',', encoding='utf-8')
+                except Exception as e_csv2:
+                    # İkisi de başarısız olursa hataları göster
+                    return f"CSV dosyası okunamadı. <br><br>Hata 1 (Noktalı Virgül denemesi) : {str(e_csv1)} <br><br> Hata 2 (Virgül denemesi) : {str(e_csv2)}"
 
-            elif filename.endswith('.xlsx'):
-                file_type = "Excel"
-                # Eski kodumuz, Excel için çalışmaya devam ediyor
-                df = pd.read_excel(file, engine='openpyxl', header=5)
-            
-            else:
-                return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
-            
-            # --- İSTEDİĞİN GÜNCELLEMELER ---
-            
-            # 1. Toplam satır sayısını al
-            total_rows = len(df)
-            
-            cikti = f"Dosya ({file_type}) başarıyla okundu! **Toplam {total_rows} satır** yüklendi. <br><br>"
-            cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df.columns) + "<br><br>"
-            
-            # 2. .head() kaldırıldı (hepsini yükle) ve na_rep='' eklendi ('NaN' gitsin)
-            cikti += df.to_html(na_rep='')
+        elif filename.endswith('.xlsx'):
+            file_type = "Excel"
+            # Excel kodumuz zaten çalışıyordu, buna dokunmuyoruz.
+            file.seek(0) 
+            df = pd.read_excel(file, engine='openpyxl', header=5)
+        
+        else:
+            return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
+        
+        # --- RAPORLAMA (GÜNCELLENDİ) ---
+        
+        total_rows = len(df)
+        
+        cikti = f"Dosya ({file_type}) başarıyla okundu! **Toplam {total_rows} satır** bulundu. (DEBUG MODU) <br><br>"
+        cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df.columns) + "<br><br>"
+        
+        # 'NaN' gitsin VE sunucu çökmesin diye ilk 100 satırı göster
+        cikti += df.head(100).to_html(na_rep='') 
 
-            return cikti
-            
-        except Exception as e:
-            return f"Genel bir hata oluştu: {str(e)}"
-
-    return "Bir hata oluştu."
-
-if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+        return cikti
+        
+    except Exception as e:
+        # Bu, en dıştaki hata yakalayıcı.
+        return f"GENEL HATA (en dış blok): {str(e)}"

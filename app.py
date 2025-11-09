@@ -6,12 +6,13 @@ import os
 import io
 
 app = Flask(__name__)
-app.secret_key = "cokgizlibirkey-render-icin-v20-rakam-fix" 
+app.secret_key = "cokgizlibirkey-render-icin-v22-denetim-acik" 
 
 ROW_LIMIT = 500 
 RULE_FILE_PATH = 'TDHP_Normal_Bakiye_Yonu_SON_7li_dahil.xlsx - TDHP_Bakiye.csv'
 
 # --- YARDIMCI FONKSİYONLAR ---
+# ... (load_rules kodu aynı)
 def load_rules():
     try:
         rules_df = pd.read_csv(RULE_FILE_PATH, sep=';', encoding='iso-8859-9')
@@ -28,26 +29,17 @@ def load_rules():
 
 MUHASEBE_KURALLARI = load_rules()
 
-# --- YENİ FONKSİYON: RAKAM TEMİZLEME ---
+# --- RAKAM TEMİZLEME FONKSİYONU (V20) ---
+# Bu sefer rakamları temizlerken sadece Borç/Alacak sütununu kullanıyoruz
 def clean_amount_v20(series):
     series = series.astype(str).str.strip()
-    # 1. Metin dışı karakterleri sil
     series = series.str.replace(r'[^\d\.\,]', '', regex=True) 
-    # 2. Binlik ayıracı (nokta) kaldır
     series = series.str.replace('.', '', regex=False)        
-    # 3. Ondalık ayıracı (virgül) noktaya çevir
     series = series.str.replace(',', '.', regex=False)        
     return pd.to_numeric(series, errors='coerce').fillna(0)
 
 
-# --- ANA SAYFA ---
-@app.route('/')
-def ana_sayfa():
-    data_loaded = 'dataframe_json' in session
-    return render_template('index.html', data_loaded=data_loaded)
-
-
-# --- YÜKLEME VE BORÇ/ALACAK RAKAM TEMİZLİĞİ ---
+# --- YÜKLEME VE FİLTRELEME ---
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'dosya' not in request.files:
@@ -66,42 +58,33 @@ def upload_file():
             flash("error", "HATA! Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin.")
             return redirect(url_for('ana_sayfa'))
 
-        # TEMİZLEME AŞAMASI (v10)
+        # TEMİZLEME AŞAMASI
         df['HESAP KODU'] = df['HESAP KODU'].astype(str)
         df_clean = df.dropna(subset=['HESAP ADI']).copy() 
         df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy() 
         
-        # --- BORÇ/ALACAK RAKAM TEMİZLİĞİ UYGULANMASI ---
+        # --- RAKAM TEMİZLİĞİ UYGULAMASI ---
         df_final['BORÇ'] = clean_amount_v20(df_final['BORÇ'])
         df_final['ALACAK'] = clean_amount_v20(df_final['ALACAK'])
         
-        # --- SONUÇ RAPORU (Sadece Kaydırma Testi) ---
+        # Veriyi JSON formatında şifreleyip Session'da sakla
         session['dataframe_json'] = df_final.to_json()
         
-        # Hata ayıklama mesajı:
-        flash("success", f"Başarılı! Veriniz hazır. Lütfen Borç ve Alacak sütunlarının rakamlarını kontrol edin. Net {len(df_final)} alt hesap.")
+        flash("success", f"Başarılı! Veriniz temizlendi ve denetim için hazır. Net {len(df_final)} alt hesap bulundu.")
+        return redirect(url_for('ana_sayfa'))
         
-        # Ekrana sonucu bas (Kaydırma hatasını görmek için)
-        total_rows = len(df_final)
-        cikti = f"<h2 style='color: #4CAF50;'>VERİ KAYDIRMA/RAKAM TESTİ BAŞARILI!</h2>"
-        cikti += f"Net İşlem Satırı: {total_rows} <br>"
-        cikti += f"<b>LÜTFEN TABLONUN BORÇ VE ALACAK SÜTUNLARINI KONTROL EDİNİZ!</b><br><br>"
-        
-        df_final['BORÇ'] = df_final['BORÇ'].round(2)
-        df_final['ALACAK'] = df_final['ALACAK'].round(2)
-        df_final = df_final.fillna('')
-        
-        return cikti + df_final.head(ROW_LIMIT).to_html(na_rep='', justify='left')
-
     except Exception as e:
-        flash("error", f"KRİTİK VERİ İŞLEME HATASI! Hata Kodu: {str(e)}")
+        flash("error", f"YÜKLEME SIRASINDA KRİTİK HATA! {str(e)}")
         return redirect(url_for('ana_sayfa'))
 
 
-# --- DENETİMİ BAŞLAT (BUTONLA) ---
-# (Bu kısım aynı kalıyor, sadece yüklemeden sonraki butona basıldığında çalışacak)
+# --- DENETİMİ BAŞLAT (BUTONLA) - ANALİZ BURADA YAPILACAK ---
 @app.route('/denetle', methods=['GET'])
 def denetle():
+    if not MUHASEBE_KURALLARI:
+        flash("error", "Hata: Kural dosyası yüklenmediği için analiz yapılamıyor.")
+        return redirect(url_for('ana_sayfa'))
+
     if 'dataframe_json' not in session:
         flash("error", "Hata: Denetlenecek veri bulunamadı! Lütfen önce dosyayı yükleyin.")
         return redirect(url_for('ana_sayfa'))
@@ -109,19 +92,46 @@ def denetle():
     try:
         df_final = pd.read_json(session['dataframe_json'])
 
-        # Borç/Alacak sütunlarının varlığını kontrol et
+        # Borç ve Alacak sütunlarının varlığını kontrol et
         if 'BORÇ' not in df_final.columns or 'ALACAK' not in df_final.columns:
-            flash("error", "Kritik Hata: BORÇ veya ALACAK sütunları bulunamıyor. Kaydırma hatası olabilir.")
+            flash("error", "Kritik Hata: BORÇ veya ALACAK sütunları bulunamıyor.")
             return redirect(url_for('ana_sayfa'))
         
         # --- BORÇ/ALACAK DENETİM MOTORU ---
         
-        # ... (Denetim kodu ve raporlama v15'teki gibi)
+        df_final['HATA_DURUMU'] = ''
+        
+        for index, row in df_final.iterrows():
+            try:
+                ana_hesap = str(row['HESAP KODU']).split('.')[0].strip()
+                ana_hesap_ilk_uc = ana_hesap[:3]
+            except:
+                continue 
+            
+            if ana_hesap_ilk_uc in MUHASEBE_KURALLARI:
+                kural = MUHASEBE_KURALLARI[ana_hesap_ilk_uc]
+                borc_var = row['BORÇ'] > 0
+                alacak_var = row['ALACAK'] > 0
+                
+                hata_mesaji = []
+                
+                if kural == 'B' and alacak_var:
+                    hata_mesaji.append(f"TERS KAYIT (B): Kural Borç çalışması der, Alacak'ta değer var.")
+                
+                if kural == 'A' and borc_var:
+                    hata_mesaji.append(f"TERS KAYIT (A): Kural Alacak çalışması der, Borç'ta değer var.")
+                
+                if borc_var and alacak_var:
+                     hata_mesaji.append(f"ÇİFT KAYIT: Borç ve Alacak aynı anda dolu! Kural: {kural}")
+
+                if hata_mesaji:
+                    df_final.loc[index, 'HATA_DURUMU'] = " / ".join(hata_mesaji)
+        
+        # --- SONUÇ RAPORU HAZIRLAMA VE GÖSTERME ---
         
         total_errors = len(df_final[df_final['HATA_DURUMU'] != ''])
         total_rows = len(df_final)
 
-        # HTML çıktısı
         cikti = f"<h2 style='color: #4CAF50;'>BORÇ/ALACAK DENETİMİ TAMAMLANDI!</h2>"
         cikti += f"Net İşlem Satırı: {total_rows} <br>"
         cikti += f"<b style='color: red;'>TESPİT EDİLEN TERS KAYIT/HATA SAYISI: {total_errors}</b><br><br>"
@@ -144,12 +154,10 @@ def denetle():
 # --- HTML ve Diğer Fonksiyonlar ---
 @app.route('/', methods=['GET'])
 def ana_sayfa():
-    # ... (Aynı)
     data_loaded = 'dataframe_json' in session
     return render_template('index.html', data_loaded=data_loaded)
 
-# ... (Diğer fonksiyonlar)
-@app.route('/teardown_request')
+@app.teardown_request
 def cleanup(exception=None):
     pass
     

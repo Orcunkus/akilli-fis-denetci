@@ -1,84 +1,101 @@
-# SADELEŞTİRİLMİŞ V17 KODU: SADECE HATA DÜZELTME
 from flask import Flask, render_template, request, flash, redirect, url_for, session
-# ... (Diğer importlar)
+import pandas as pd
+import numpy as np  
+import re  
+import os
+import io
 
 app = Flask(__name__)
-app.secret_key = "cokgizlibirkey-render-icin-v17-nihai" 
-# ... (RULE_FILE_PATH, load_rules, MUHASEBE_KURALLARI tanımları aynı)
-# ... (load_rules, MUHASEBE_KURALLARI tanımları aynı)
+app.secret_key = "cokgizlibirkey-render-icin-v18-nihai-fix" 
 
-# ... (load_rules, MUHASEBE_KURALLARI tanımları aynı)
-def load_rules():
-    try:
-        # Kural dosyası yükleme (Aynı)
-        rules_df = pd.read_csv(RULE_FILE_PATH, sep=';', encoding='iso-8859-9')
-        rules_df.columns = ['HESAP_KODU', 'HESAP_ADI', 'BAKIYE_YONU', 'BAKIYE_YONU_ING'] + list(rules_df.columns[4:])
-        rules_df['HESAP_KODU'] = pd.to_numeric(rules_df['HESAP_KODU'], errors='coerce')
-        rules_df = rules_df.dropna(subset=['HESAP_KODU'])
-        rules_df['HESAP_KODU'] = rules_df['HESAP_KODU'].astype(int).astype(str).str[:3]
-        rules_df = rules_df.drop_duplicates(subset=['HESAP_KODU']).set_index('HESAP_KODU')
-        rules_df['BAKIYE_YONU'] = rules_df['BAKIYE_YONU'].str.upper().str.strip().replace({'BORÇ': 'B', 'ALACAK': 'A', 'HESAP TÜRÜNE GÖRE': 'H'})
-        return rules_df['BAKIYE_YONU'].to_dict()
-    except Exception as e:
-        print(f"Kural dosyası yüklenirken HATA oluştu: {e}")
-        return None
+ROW_LIMIT = 500 
+RULE_FILE_PATH = 'TDHP_Normal_Bakiye_Yonu_SON_7li_dahil.xlsx - TDHP_Bakiye.csv'
 
-MUHASEBE_KURALLARI = load_rules()
-
+# Kural yükleme fonksiyonunu tutuyoruz ama şimdilik kullanmıyoruz
+# ... 
 
 @app.route('/')
 def ana_sayfa():
-    data_loaded = 'dataframe_json' in session
-    return render_template('index.html', data_loaded=data_loaded)
+    # Artık denetim butonu yok, sadece sonuç gösterilecek
+    return render_template('index.html', data_loaded=False) 
 
 
+# --- YÜKLEME VE KAYDIRMA KODU (ODAK NOKTASI) ---
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'dosya' not in request.files:
-        flash("error", "HATA! Dosya Seçilmedi.") # Kategori eklendi
+        flash("error", "HATA! Dosya Seçilmedi.")
         return redirect(url_for('ana_sayfa'))
-    
     file = request.files['dosya']
-    
-    if file.filename == '':
-        flash("error", "HATA! Dosya seçildi ama dosya adı boş.")
-        return redirect(url_for('ana_sayfa'))
     
     try:
         # Dosya okuma (Aynı)
-        # ...
+        filename = file.filename
+        if filename.endswith('.csv'):
+            df = pd.read_csv(file, sep=';', skiprows=6, encoding='iso-8859-9')
+        elif filename.endswith('.xlsx'):
+            df = pd.read_excel(file, engine='openpyxl', header=5)
+        else:
+            flash("error", "HATA! Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin.")
+            return redirect(url_for('ana_sayfa'))
 
-        # TEMİZLEME AŞAMASI (Aynı)
-        # ...
+        # TEMİZLEME AŞAMASI (v10)
+        df['HESAP KODU'] = df['HESAP KODU'].astype(str)
+        df_clean = df.dropna(subset=['HESAP ADI']).copy() 
+        df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy() 
         
-        session['dataframe_json'] = df_final.to_json()
-        
-        flash("success", f"Başarılı! Dosyanız temizlendi ve denetim için hazır. Net {len(df_final)} alt hesap bulundu.")
-        return redirect(url_for('ana_sayfa'))
-        
-    except Exception as e:
-        # HATA KAYDI: Artık Hata Mesajını Gösterecek.
-        flash("error", f"YÜKLEME SIRASINDA KRİTİK HATA! {str(e)}")
-        return redirect(url_for('ana_sayfa'))
+        # --- BORÇ/ALACAK KAYDIRMA KISMI (KRİTİK) ---
+        df_final['BORÇ_HAM'] = pd.to_numeric(df_final['BORÇ'], errors='coerce')
+        df_final['ALACAK_HAM'] = pd.to_numeric(df_final['ALACAK'], errors='coerce')
 
-
-# ... (Diğer fonksiyonlar aynı)
-@app.route('/denetle', methods=['GET'])
-def denetle():
-    # ... (Denetleme kodunun tamamı aynı)
-    
-    try:
-        # ... (Analiz yapıldı)
+        df_error = df_final[df_final['BORÇ_HAM'].isna() & df_final['ALACAK_HAM'].isna()].copy()
         
-        # Raporlama:
-        # ...
+        # Metin içinden sayı çekme fonksiyonu (Türkçe formatı temizler)
+        def extract_amount(row):
+            # DETAY'dan veya AÇIKLAMA'dan ilk sayıyı bulmaya çalış
+            text = str(row['DETAY']) + " " + str(row['AÇIKLAMA'])
+            match = re.search(r'(\d[\d\.\,]+)', text) 
+            if match:
+                # KRİTİK: Türkçe formattan sayıya çevir
+                return float(match.group(1).replace('.', '').replace(',', '.')) 
+            return 0.0
+
+        if not df_error.empty:
+            df_error.loc[:, 'BORÇ_YENİ'] = df_error.apply(extract_amount, axis=1)
+            df_error.loc[:, 'ALACAK_YENİ'] = 0.0 # Alacak her zaman aynı satırda boş
+            
+            df_final.update(df_error[['BORÇ_YENİ']].rename(columns={'BORÇ_YENİ': 'BORÇ'}))
+            df_final.update(df_error[['ALACAK_YENİ']].rename(columns={'ALACAK_YENİ': 'ALACAK'}))
+            
+            df_final['BORÇ'] = df_final['BORÇ'].combine_first(df_final['BORÇ_HAM']).fillna(0)
+            df_final['ALACAK'] = df_final['ALACAK'].combine_first(df_final['ALACAK_HAM']).fillna(0)
+            
+        df_final = df_final.drop(columns=['BORÇ_HAM', 'ALACAK_HAM'], errors='ignore')
+        
+        # --- SONUÇ RAPORU (Denetimsiz, Sadece Kaydırmayı Göster) ---
+        total_rows = len(df_final)
+
+        cikti = f"<h2 style='color: #4CAF50;'>VERİ KAYDIRMA TESTİ BAŞARILI!</h2>"
+        cikti += f"Net İşlem Satırı: {total_rows} <br>"
+        cikti += f"<b>Lütfen aşağıdaki tablonun BORÇ ve ALACAK sütunlarını kontrol edin.</b><br><br>"
+        
+        df_final['BORÇ'] = df_final['BORÇ'].round(2)
+        df_final['ALACAK'] = df_final['ALACAK'].round(2)
+        df_final = df_final.fillna('')
         
         return cikti + df_final.head(ROW_LIMIT).to_html(na_rep='', justify='left')
 
     except Exception as e:
-        flash("error", f"DENETİM MOTORU KRİTİK HATA VERDİ: {str(e)}")
+        # HATA KAYDI: Kaydırma kodundaki asıl hatayı burada yakalayacağız.
+        flash("error", f"KRİTİK VERİ İŞLEME HATASI! Hata Kodu: {str(e)}")
         return redirect(url_for('ana_sayfa'))
 
+
+# --- DENETİM VE SESSION İŞLEMLERİ KALDIRILDI ---
+@app.route('/denetle', methods=['GET'])
+def denetle():
+    flash("error", "Denetim butonu şu an pasiftir. Önce kaydırma hatasını çözmeliyiz.")
+    return redirect(url_for('ana_sayfa'))
 
 @app.teardown_request
 def cleanup(exception=None):

@@ -6,7 +6,7 @@ import io
 app = Flask(__name__)
 app.secret_key = "cokgizlibirkey-render-icin" 
 
-# Sunucuyu çökertmeyecek güvenli bir limit
+# Sunucuyu çökertmeyecek güvenli bir limit (dosyan 244 satırsa 500 yeterli)
 ROW_LIMIT = 500
 
 @app.route('/')
@@ -54,7 +54,7 @@ def upload_file():
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- YENİ AKILLI FİLTRE (v2) ---
+        # --- AKILLI FİLTRE (v2) BURADA ---
         
         # 1. 'BORÇ' ve 'ALACAK' sütunlarını sayıya çevir. Sayı olmayanlar 'NaN' olacak.
         df['BORÇ'] = pd.to_numeric(df['BORÇ'], errors='coerce')
@@ -64,7 +64,7 @@ def upload_file():
         #    Bu, tüm 'TOPLAM', 'FİŞ AÇIKLAMA', 'MAHSUP' ve boş satırları temizler.
         df_clean = df.dropna(subset=['BORÇ', 'ALACAK'], how='all').copy()
         
-        # --- İSTEK: SADECE ALT HESAPLAR ---
+        # --- SENİN İSTEĞİN: SADECE ALT HESAPLAR ---
         # 3. 'HESAP KODU'nu metin (string) olarak ele al
         df_clean['HESAP KODU'] = df_clean['HESAP KODU'].astype(str)
         

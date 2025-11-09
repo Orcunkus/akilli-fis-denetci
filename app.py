@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, flash
 import pandas as pd
-import numpy as np  # YENİ KÜTÜPHANE: Boşlukları temizlemek için
+import numpy as np  # Boşlukları (' ' veya '') temizlemek için
 import os
 import io 
 
@@ -52,26 +52,18 @@ def upload_file():
         else:
             return "Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin."
         
-        # --- YENİ AKILLI FİLTRE (v7) ---
+        # --- YENİ AKILLI FİLTRE (v8) ---
         
-        # AŞAMA 1: ÇÖP VERİYİ (MAHSUP, TOPLAM, FİŞ AÇIKLAMA vb.) TEMİZLE
-        df['HESAP_KODU_STR'] = df['HESAP KODU'].astype(str)
-        df_clean = df[
-            ~df['HESAP_KODU_STR'].str.contains('MAHSUP', na=False, case=False) &
-            ~df['HESAP_KODU_STR'].str.contains('TOPLAM', na=False, case=False) &
-            ~df['HESAP_KODU_STR'].str.contains('FİŞ AÇIKLAMA', na=False, case=False) &
-            ~df['HESAP_KODU_STR'].str.contains('HESAP KODU', na=False, case=False)
-        ].copy()
-
-        # AŞAMA 2: ANA/ARA HESAPLARI (Açıklaması boş olanlar) TEMİZLE
+        # KURAL: Sadece 'DETAY' sütunu DOLU olan satırları tut.
         
-        # 2a. Boş metinleri ("" veya " ") gerçek NaN'a (boş) çevir
-        df_clean['AÇIKLAMA'] = df_clean['AÇIKLAMA'].replace(r'^\s*$', np.nan, regex=True)
-        df_clean['DETAY'] = df_clean['DETAY'].replace(r'^\s*$', np.nan, regex=True)
+        # 1. 'DETAY' sütunundaki boş metinleri ("" veya " ") gerçek NaN'a (boş) çevir
+        df['DETAY'] = df['DETAY'].replace(r'^\s*$', np.nan, regex=True)
 
-        # 2b. Artık 'AÇIKLAMA' ve 'DETAY' sütunları aynı anda NaN (gerçek boş) olanları at.
-        df_final = df_clean.dropna(subset=['AÇIKLAMA', 'DETAY'], how='all').copy()
-
+        # 2. 'DETAY' sütunu NaN (boş) olan tüm satırları AT.
+        #    Bu, 'TOPLAM', 'MAHSUP', 'FİŞ AÇIKLAMA' ve tüm ana/ara hesapları
+        #    tek seferde temizleyecektir.
+        df_final = df.dropna(subset=['DETAY']).copy()
+        
         # ----------------------------------------
         
         # RAPORLAMA (LİMİTLİ)
@@ -79,15 +71,10 @@ def upload_file():
         total_rows_final = len(df_final) # Artık TEMİZLENMİŞ satır sayısı
         
         cikti = f"Dosya ({file_type}) başarıyla okundu! (Toplam {total_rows_raw} ham satır) <br>"
-        cikti += f"Tüm çöp satırlar (TOPLAM, MAHSUP, FİŞ AÇIKLAMA) ayıklandı. <br>"
-        cikti += f"Açıklaması boş olan Ana/Ara Hesaplar ayıklandı. <br>"
-        cikti += f"**Net {total_rows_final} satır** gerçek işlem bulundu. <br>"
+        cikti += f"SADECE 'DETAY'I DOLU OLAN GERÇEK İŞLEM SATIRLARI FİLTRELENDİ. <br>"
+        cikti += f"**Net {total_rows_final} satır** işlem bulundu. <br>"
         cikti += f"Sunucu için **ilk {ROW_LIMIT} satır** gösteriliyor...<br><br>"
         
-        # O geçici sütuna artık ihtiyacımız yok, tabloda görünmesin
-        if 'HESAP_KODU_STR' in df_final.columns:
-            df_final = df_final.drop(columns=['HESAP_KODU_STR'])
-            
         cikti += "<b>Algılanan Sütunlar:</b> " + ", ".join(df_final.columns) + "<br><br>"
         
         # 'NaN' gitsin (na_rep='') VE ilk 500 satırı göster

@@ -6,12 +6,13 @@ import os
 import io
 
 app = Flask(__name__)
-app.secret_key = "cokgizlibirkey-render-icin-v26-denetim-aktif" 
+app.secret_key = "cokgizlibirkey-render-icin-v23-analiz-fix" 
 
 ROW_LIMIT = 500 
 RULE_FILE_PATH = 'TDHP_Normal_Bakiye_Yonu_SON_7li_dahil.xlsx - TDHP_Bakiye.csv'
 
-# --- YARDIMCI FONKSİYONLAR (KURAL YÜKLEME) ---
+# --- YARDIMCI FONKSİYONLAR ---
+# ... (load_rules ve clean_amount_v20 kodları aynı)
 def load_rules():
     try:
         rules_df = pd.read_csv(RULE_FILE_PATH, sep=';', encoding='iso-8859-9')
@@ -28,7 +29,6 @@ def load_rules():
 
 MUHASEBE_KURALLARI = load_rules()
 
-# Rakam Temizleme (V20) - Sadece sayısal sütunlar için
 def clean_amount_v20(series):
     series = series.astype(str).str.strip()
     series = series.str.replace(r'[^\d\.\,]', '', regex=True) 
@@ -37,14 +37,7 @@ def clean_amount_v20(series):
     return pd.to_numeric(series, errors='coerce').fillna(0)
 
 
-# --- ANA SAYFA ---
-@app.route('/')
-def ana_sayfa():
-    data_loaded = 'dataframe_json' in session
-    return render_template('index.html', data_loaded=data_loaded)
-
-
-# --- YÜKLEME VE VERİYİ SAKLAMA ---
+# --- YÜKLEME VE FİLTRELEME ---
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'dosya' not in request.files:
@@ -63,12 +56,12 @@ def upload_file():
             flash("error", "HATA! Desteklenmeyen dosya formatı. Lütfen .xlsx veya .csv yükleyin.")
             return redirect(url_for('ana_sayfa'))
 
-        # HAM FİLTRE: Sadece Alt Hesapları Tutan Basit Filtre
+        # TEMİZLEME AŞAMASI
         df['HESAP KODU'] = df['HESAP KODU'].astype(str)
         df_clean = df.dropna(subset=['HESAP ADI']).copy() 
         df_final = df_clean[df_clean['HESAP KODU'].str.contains(r'\.', na=False)].copy() 
-
-        # Rakam Temizliği ve Sayısallaştırma (Analiz için şart)
+        
+        # Rakam Temizliği ve Sayısallaştırma (Session'a kaydetmeden ÖNCE yapıldı)
         df_final['BORÇ'] = clean_amount_v20(df_final['BORÇ'])
         df_final['ALACAK'] = clean_amount_v20(df_final['ALACAK'])
         
@@ -83,7 +76,7 @@ def upload_file():
         return redirect(url_for('ana_sayfa'))
 
 
-# --- DENETİMİ BAŞLAT (NİHAİ ANALİZ MOTORU) ---
+# --- DENETİMİ BAŞLAT (BUTONLA) - HATA DÜZELTME BURADA! ---
 @app.route('/denetle', methods=['GET'])
 def denetle():
     if not MUHASEBE_KURALLARI:
@@ -97,13 +90,23 @@ def denetle():
     try:
         df_final = pd.read_json(session['dataframe_json'])
 
+        # *** KRİTİK HATA DÜZELTME: JSON'dan gelen sütunları tekrar sayıya çeviriyoruz. ***
+        # 'BORÇ' sütununu bulamıyordu, şimdi bulsa bile sayısallaştıramadığı için hata vermeyecek.
+        df_final['BORÇ'] = pd.to_numeric(df_final['BORÇ'], errors='coerce').fillna(0)
+        df_final['ALACAK'] = pd.to_numeric(df_final['ALACAK'], errors='coerce').fillna(0)
+
+        # Borç ve Alacak sütunlarının varlığını kontrol et
+        if 'BORÇ' not in df_final.columns or 'ALACAK' not in df_final.columns:
+            flash("error", "Kritik Hata: BORÇ veya ALACAK sütunları bulunamıyor.")
+            return redirect(url_for('ana_sayfa'))
+        
         # --- BORÇ/ALACAK DENETİM MOTORU ---
+        # ... (Analiz kodunun tamamı aynı)
         
         df_final['HATA_DURUMU'] = ''
         
         for index, row in df_final.iterrows():
             try:
-                # Alt hesaptan ana hesabı bul (örn: 153.00.20 -> 153)
                 ana_hesap = str(row['HESAP KODU']).split('.')[0].strip()
                 ana_hesap_ilk_uc = ana_hesap[:3]
             except Exception as e_analiz:
@@ -153,7 +156,7 @@ def denetle():
         return redirect(url_for('ana_sayfa'))
 
 
-# --- HTML ve Diğer Fonksiyonlar ---
+# --- HTML ve Diğer Fonksiyonlar (Aynı) ---
 @app.route('/', methods=['GET'])
 def ana_sayfa():
     data_loaded = 'dataframe_json' in session
